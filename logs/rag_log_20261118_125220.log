@@ -1,0 +1,4 @@
+2026-11-18 12:52:20.989 | INFO     | root                      | MainThread      | File logging enabled. Logs will be written to: logs\rag_log_20261118_125220.log
+2026-11-18 12:52:20.992 | DEBUG    | test_logging_config       | MainThread      | This is a DEBUG message
+2026-11-18 12:52:20.992 | INFO     | test_logging_config       | MainThread      | This is an INFO message
+2026-11-18 12:52:20.992 | WARNING  | test_logging_config       | MainThread      | This is a WARNING message

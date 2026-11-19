@@ -1,0 +1,13 @@
+# docker-compose.yml
+services:
+  qdrant:
+    image: qdrant/qdrant:latest # pin a specific version for real use
+    ports:
+      - "6333:6333" # REST
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
