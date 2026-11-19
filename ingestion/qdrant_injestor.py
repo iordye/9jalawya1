@@ -1,22 +1,27 @@
-import uuid, time
+import uuid, time, json
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 from fastembed import SparseTextEmbedding
 from utils.logging_config import get_logger
 from pathlib import Path
+from typing import List, Dict
+
+
 logger = get_logger(__name__)
 
-client = QdrantClient(url="http://localhost:6333")
+client = QdrantClient(url="http://localhost:6333", prefer_grpc=True, timeout=120)
 Collection = '9jalawya'
 EMBEDDING_MODEL_NAME = "models\\embedding_ml\\all-MiniLM-L6-v2"
 SPARSE_MODEL_NAME = "Qdrant/bm25"
 CHUNKED_DATA_DIR = Path("data\chunked")
+BATCH_SIZE = 256
 
 # Collection Creation
 
 def setup_qdrant_collection(
     collection_name: str = Collection, 
-    client: QdrantClient = client
+    client: QdrantClient = client, 
+    reset: bool = False
 ) -> bool:
     """
     Set up the Qdrant collection if it doesn't exist.
@@ -24,6 +29,13 @@ def setup_qdrant_collection(
     """
     logger.info(f"Setting up Qdrant collection: {collection_name}")
     created = False
+
+    if reset and client.collection_exists(collection_name=collection_name):
+        try:
+            client.delete_collection(collection_name=collection_name)
+            logger.info(f"Collection {collection_name} deleted successfully(reset=True).")
+        except Exception:
+            pass
 
     if not client.collection_exists(collection_name=collection_name):
         logger.info(f"Collection {collection_name} does not exist. Creating collection...")
@@ -89,7 +101,7 @@ def load_sparse_model(model_name: str = SPARSE_MODEL_NAME) -> SparseTextEmbeddin
     start = time.time()
     logger.info("Loading sparse embedding model: Qdrant/bm25")
     try:
-        sparse_model = SparseTextEmbedding(SPARSE_MODEL_NAME)
+        sparse_model = SparseTextEmbedding(model_name)
         elapsed = round(time.time() - start, 2)
         logger.info(f"  Sparse model loaded successfully in {elapsed}s")
         return sparse_model
@@ -152,3 +164,70 @@ def load_all_chunks(chunked_dir: Path = CHUNKED_DATA_DIR) -> List[Dict]:
 
     logger.info(f"  Total chunks loaded: {len(all_chunks):,}")
     return all_chunks
+
+def ingest(chunks, batch_size=BATCH_SIZE, dense_model=None, sparse_model=None, client=client):
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        texts = [c["text"] for c in batch]
+        dense = dense_model.encode(texts, normalize_embeddings=True)
+        sparse = list(sparse_model.embed(texts))
+
+        points = [
+            models.PointStruct(
+                id=str(uuid.uuid5(uuid.NAMESPACE_URL, c["chunk_id"])),
+                vector={
+                    "dense": d.tolist(),
+                    "sparse": models.SparseVector(
+                        indices=s.indices.tolist(), values=s.values.tolist()
+                    ),
+                },
+                payload={
+                    "doc_key": c["doc_key"],
+                    "section": c["section_number_int"],
+                    "section_title": c["section_title"],
+                    "text": c["text"],
+                    "corpus_version": "2026-11",
+                },
+            )
+            for c, d, s in zip(batch, dense, sparse)
+        ]
+        client.upsert(Collection, points=points)
+
+def run_injestion(reset: bool= False) -> None:
+    
+    """
+          Full ingestion pipeline orchestrator.
+        
+            Runs all four steps in sequence:
+            1. Load embedding model
+            2. Set up ChromaDB collection
+            3. Load and deduplicate chunks
+            4. Embed and ingest chunks
+            5. Verify results
+        
+            Args:
+                reset: If True, clears the existing collection before ingesting.
+                       Use this when you have changed your chunking strategy and
+                       want to rebuild the vector store from scratch.
+                       Default False for safe incremental ingestion.
+    """
+
+    logger.info("="*60)
+    logger.info("9jalawya - Ingestion Stage")
+    logger.info("="*60)
+
+    if reset:
+       logger.warning("RESET MODE: Existing collection will be deleted and rebuilt.")
+
+    setup_qdrant_collection(collection_name=Collection, client=client, reset=reset)
+    embedding = load_embedding_model()
+    sparse = load_sparse_model()
+    chunks = load_all_chunks()
+    ingest(chunks, batch_size=BATCH_SIZE, dense_model=embedding, sparse_model=sparse, client=client)
+    logger.info("Ingestion complete. Total chunks ingested: {:,}".format(len(chunks)))
+
+
+if __name__ == "__main__":
+    run_injestion()
+
+
