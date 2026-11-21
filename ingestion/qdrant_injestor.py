@@ -228,6 +228,8 @@ def run_injestion(reset: bool= False) -> None:
 
 
 if __name__ == "__main__":
-    run_injestion()
+    import sys
+    reset_flag = "--reset" in sys.argv
+    run_injestion(reset=reset_flag)
 
 
