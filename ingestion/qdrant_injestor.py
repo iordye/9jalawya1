@@ -5,16 +5,19 @@ from fastembed import SparseTextEmbedding
 from utils.logging_config import get_logger
 from pathlib import Path
 from typing import List, Dict
+from config.settings import Settings
+from embeddings.services import EmbeddingService
 
 
 logger = get_logger(__name__)
-
-client = QdrantClient(url="http://localhost:6333", prefer_grpc=True, timeout=120)
-Collection = '9jalawya'
-EMBEDDING_MODEL_NAME = "models\\embedding_ml\\all-MiniLM-L6-v2"
-SPARSE_MODEL_NAME = "Qdrant/bm25"
+settings = Settings()
+client = settings.vectorstore.client
+Collection = settings.vectorstore.collection_name
+EMBEDDING_MODEL_NAME = settings.embeddings.model_name
+SPARSE_MODEL_NAME = settings.sparse.model_name
 CHUNKED_DATA_DIR = Path("data\chunked")
-BATCH_SIZE = 256
+BATCH_SIZE = settings.embeddings.batch_size
+embeddings = EmbeddingService()
 
 # Collection Creation
 
@@ -64,32 +67,6 @@ def setup_qdrant_collection(
     )
 
     return created
-
-def load_embedding_model(
-        model_name: str = EMBEDDING_MODEL_NAME
-        ) -> SentenceTransformer:
-    """
-    Load the embedding model.
-    Args:
-        model_name: HuggingFace model identifier string
-    
-    Returns:
-        Loaded SentenceTransformer model object
-    """
-    start = time.time()
-    logger.info(f"Loading embedding model: {model_name}")
-    try:
-            model = SentenceTransformer(model_name)
-            elapsed = round(time.time() - start, 2)
-            logger.info(f"  Model loaded successfully in {elapsed}s")
-            logger.info(f"  Embedding dimensions: {model.get_sentence_embedding_dimension()}")
-           
-            return model
-    
-    except Exception as e:
-        logger.error(f"Failed to load embedding model '{model_name}': {e}")
-        logger.error("Ensure sentence-transformers is installed: pip install sentence-transformers")
-        raise
 
 def load_sparse_model(model_name: str = SPARSE_MODEL_NAME) -> SparseTextEmbedding:
     """
@@ -165,11 +142,11 @@ def load_all_chunks(chunked_dir: Path = CHUNKED_DATA_DIR) -> List[Dict]:
     logger.info(f"  Total chunks loaded: {len(all_chunks):,}")
     return all_chunks
 
-def ingest(chunks, batch_size=BATCH_SIZE, dense_model=None, sparse_model=None, client=client):
+def ingest(chunks, batch_size=BATCH_SIZE, sparse_model=None, client=client):
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
         texts = [c["text"] for c in batch]
-        dense = dense_model.encode(texts, normalize_embeddings=True)
+        dense = embeddings.embed_documents()
         sparse = list(sparse_model.embed(texts))
 
         points = [
